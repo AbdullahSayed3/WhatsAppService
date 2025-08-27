@@ -1,4 +1,5 @@
 <?php
+// app/Console/Commands/WhatsAppStats.php
 
 namespace App\Console\Commands;
 
@@ -33,33 +34,40 @@ class WhatsAppStats extends Command
         $totalMessages = WhatsAppMessage::count();
         $inboundMessages = WhatsAppMessage::where('direction', 'inbound')->count();
         $outboundMessages = WhatsAppMessage::where('direction', 'outbound')->count();
+        $messagesToday = WhatsAppMessage::whereDate('created_at', today())->count();
 
         $this->table(['Metric', 'Count'], [
             ['Total Users', $totalUsers],
             ['Active Users', $activeUsers],
             ['New Users', $newUsers],
             ['Total Messages', $totalMessages],
+            ['Messages Today', $messagesToday],
             ['Inbound Messages', $inboundMessages],
             ['Outbound Messages', $outboundMessages]
         ]);
 
-        // most active users
+        // Most active users
         $this->line('');
         $this->info('🔥 Most Active Users:');
+
         $activeUsersList = WhatsAppUser::orderBy('message_count', 'desc')
             ->limit(5)
             ->get(['phone_number', 'name', 'message_count', 'last_message_at']);
 
-        $tableData = $activeUsersList->map(function ($user) {
-            return [
-                $user->phone_number,
-                $user->name ?? 'Unknown',
-                $user->message_count,
-                $user->last_message_at ? $user->last_message_at->diffForHumans() : 'Never'
-            ];
-        })->toArray();
+        if ($activeUsersList->count() > 0) {
+            $tableData = $activeUsersList->map(function ($user) {
+                return [
+                    $user->phone_number,
+                    $user->name ?? 'Unknown',
+                    $user->message_count,
+                    $user->last_message_at ? $user->last_message_at->diffForHumans() : 'Never'
+                ];
+            })->toArray();
 
-        $this->table(['Phone', 'Name', 'Messages', 'Last Active'], $tableData);
+            $this->table(['Phone', 'Name', 'Messages', 'Last Active'], $tableData);
+        } else {
+            $this->line('No users found yet.');
+        }
     }
 
     private function showUserStats($phoneNumber)
@@ -68,7 +76,7 @@ class WhatsAppStats extends Command
 
         if (!$user) {
             $this->error("User {$phoneNumber} not found!");
-            return;
+            return 1;
         }
 
         $this->info("📱 User Statistics for {$phoneNumber}");
@@ -90,17 +98,17 @@ class WhatsAppStats extends Command
             ['Last Active', $user->last_message_at ? $user->last_message_at->diffForHumans() : 'Never']
         ]);
 
-        // last 5 messages
+        // Last 5 messages
         $this->line('');
         $this->info('💬 Recent Messages:');
-        $recentMessages = $user->messages()->limit(5)->get();
+        $recentMessages = $user->messages()->orderBy('created_at', 'desc')->limit(5)->get();
 
         if ($recentMessages->count() > 0) {
             $messagesData = $recentMessages->map(function ($message) {
                 return [
                     $message->direction === 'inbound' ? '📥' : '📤',
                     $message->type,
-                    substr($message->content, 0, 50) . (strlen($message->content) > 50 ? '...' : ''),
+                    mb_substr($message->content, 0, 50) . (mb_strlen($message->content) > 50 ? '...' : ''),
                     $message->created_at->format('H:i:s')
                 ];
             })->toArray();
@@ -109,5 +117,7 @@ class WhatsAppStats extends Command
         } else {
             $this->line('No messages found.');
         }
+
+        return 0;
     }
 }

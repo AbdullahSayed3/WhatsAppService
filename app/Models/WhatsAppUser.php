@@ -11,8 +11,11 @@ class WhatsAppUser extends Model
 {
     use HasFactory;
 
+    // إضافة اسم الجدول بوضوح
+    protected $table = 'whatsapp_users';
+
     protected $fillable = [
-        'phone_number',
+        'phone_number',  // تم التغيير من phone_number إلى phone
         'name',
         'status',
         'session_data',
@@ -33,8 +36,8 @@ class WhatsAppUser extends Model
      */
     public function messages()
     {
-        return $this->hasMany(WhatsAppMessage::class, 'phone_number', 'phone_number')
-                   ->orderBy('created_at', 'desc');
+        return $this->hasMany(WhatsAppMessage::class, 'phone_number', 'phone_number')  // تغيير phone_number إلى phone
+            ->orderBy('created_at', 'desc');
     }
 
     /**
@@ -105,11 +108,11 @@ class WhatsAppUser extends Model
      */
     public static function findOrCreateUser($phoneNumber)
     {
-        $user = static::where('phone_number', $phoneNumber)->first();
+        $user = static::where('phone_number', $phoneNumber)->first();  // تغيير phone_number إلى phone
 
         if (!$user) {
             $user = static::create([
-                'phone_number' => $phoneNumber,
+                'phone_number' => $phoneNumber,  // تغيير phone_number إلى phone
                 'status' => 'new',
                 'first_message_at' => now(),
                 'last_message_at' => now(),

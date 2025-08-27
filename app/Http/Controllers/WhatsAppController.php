@@ -4,20 +4,24 @@
 namespace App\Http\Controllers;
 
 use App\Services\WhatsAppService;
+use App\Services\ConversationHandler;
+use App\Models\WhatsAppMessage;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppController extends Controller
 {
     private $whatsAppService;
+    private $conversationHandler;
 
-    public function __construct(WhatsAppService $whatsAppService)
+    public function __construct(WhatsAppService $whatsAppService, ConversationHandler $conversationHandler)
     {
         $this->whatsAppService = $whatsAppService;
+        $this->conversationHandler = $conversationHandler;
     }
 
     /**
-     * Verify Webhook
+     * Webhook verification للتأكد من صحة الـ webhook
      */
     public function verifyWebhook(Request $request)
     {
@@ -42,205 +46,196 @@ class WhatsAppController extends Controller
     }
 
     /**
-     * Receive messages from WhatsApp
+     * استقبال الرسائل من WhatsApp
      */
     public function receiveMessage(Request $request)
     {
-        $body = $request->all();
-        Log::info('WhatsApp Webhook received: ' . json_encode($body));
+        try {
+            $body = $request->all();
+            Log::info('WhatsApp Webhook received: ' . json_encode($body));
 
-        // Verify incoming messages
-        if (isset($body['entry'][0]['changes'][0]['value']['messages'])) {
-            foreach ($body['entry'][0]['changes'][0]['value']['messages'] as $message) {
-                $this->processIncomingMessage($message, $body['entry'][0]['changes'][0]['value']);
+            // التحقق من وجود رسائل
+            if (isset($body['entry'][0]['changes'][0]['value']['messages'])) {
+                foreach ($body['entry'][0]['changes'][0]['value']['messages'] as $message) {
+                    $this->processIncomingMessage($message, $body['entry'][0]['changes'][0]['value']);
+                }
             }
-        }
 
-        // Verify message status updates
-        if (isset($body['entry'][0]['changes'][0]['value']['statuses'])) {
-            foreach ($body['entry'][0]['changes'][0]['value']['statuses'] as $status) {
-                $this->processMessageStatus($status);
+            // التحقق من تحديثات حالة الرسائل
+            if (isset($body['entry'][0]['changes'][0]['value']['statuses'])) {
+                foreach ($body['entry'][0]['changes'][0]['value']['statuses'] as $status) {
+                    $this->processMessageStatus($status);
+                }
             }
-        }
 
-        return response('OK', 200);
+            return response('OK', 200);
+        } catch (\Exception $e) {
+            Log::error('Error processing webhook: ' . $e->getMessage());
+            return response('Error', 500);
+        }
     }
 
     /**
-     * Process Incoming Message
+     * معالجة الرسائل الواردة - استخدام ConversationHandler
      */
     private function processIncomingMessage($message, $value)
     {
-        $from = $message['from'];
-        $messageId = $message['id'];
-        $timestamp = $message['timestamp'];
+        try {
+            Log::info('=== DEBUG: Processing incoming message ===');
+            Log::info('Message data: ' . json_encode($message));
+            Log::info('Value data: ' . json_encode($value));
 
-        // Mark message as read
-        $this->whatsAppService->markAsRead($messageId);
+            // Use ConversationHandler
+            $this->conversationHandler->handleIncomingMessage($message, $value);
 
-        // Verify the type of message
-        switch ($message['type']) {
-            case 'text':
-                $textBody = $message['text']['body'];
-                Log::info("Received text message from {$from}: {$textBody}");
-                $this->handleTextMessage($from, $textBody);
-                break;
+            Log::info('=== DEBUG: Message processed successfully ===');
+        } catch (\Exception $e) {
+            Log::error('=== ERROR in processIncomingMessage ===');
+            Log::error('Error: ' . $e->getMessage());
+            Log::error('File: ' . $e->getFile());
+            Log::error('Line: ' . $e->getLine());
+            Log::error('Stack trace: ' . $e->getTraceAsString());
 
-            case 'image':
-                Log::info("Received image message from {$from}");
-                $this->handleImageMessage($from, $message['image']);
-                break;
-
-            case 'document':
-                Log::info("Received document message from {$from}");
-                $this->handleDocumentMessage($from, $message['document']);
-                break;
-
-            case 'audio':
-                Log::info("Received audio message from {$from}");
-                $this->handleAudioMessage($from, $message['audio']);
-                break;
-
-            default:
-                Log::info("Received {$message['type']} message from {$from}");
-                $this->whatsAppService->sendTextMessage($from, 'عذراً، هذا النوع من الرسائل غير مدعوم حالياً.');
+            // Send error reply
+            if (isset($message['from'])) {
+                $this->whatsAppService->sendTextMessage(
+                    $message['from'],
+                    'حدث خطأ في معالجة رسالتك. يرجى المحاولة لاحقاً.'
+                );
+            }
         }
     }
 
     /**
-     * Process Message Status
+     * معالجة حالات الرسائل (تم الإرسال، تم التسليم، تم القراءة)
      */
     private function processMessageStatus($status)
     {
-        $messageId = $status['id'];
-        $statusType = $status['status'];
-        $recipient = $status['recipient_id'];
+        try {
+            $messageId = $status['id'];
+            $statusType = $status['status'];
+            $recipient = $status['recipient_id'];
+            $timestamp = isset($status['timestamp']) ? $status['timestamp'] : null;
 
-        Log::info("Message {$messageId} status: {$statusType} for {$recipient}");
-    }
+            Log::info("Message {$messageId} status: {$statusType} for {$recipient}");
 
-    /**
-     * Handle Text Message
-     */
-    private function handleTextMessage($from, $text)
-    {
-        $text = trim(strtolower($text));
-
-        switch ($text) {
-            case 'مرحبا':
-            case 'السلام عليكم':
-            case 'hello':
-                $this->whatsAppService->sendTextMessage($from, '🌟 أهلاً وسهلاً بك!\n\nيمكنك كتابة:\n• "مساعدة" للحصول على المساعدة\n• "معلومات" للحصول على معلومات\n• "خدمات" لمعرفة خدماتنا');
-                break;
-
-            case 'مساعدة':
-            case 'help':
-                $this->whatsAppService->sendTextMessage($from, "📋 قائمة الأوامر المتاحة:\n\n• مرحبا - للترحيب\n• معلومات - معلومات عامة\n• خدمات - خدماتنا\n• وقت - الوقت الحالي\n• مساعدة - هذه القائمة");
-                break;
-
-            case 'معلومات':
-            case 'info':
-                $this->whatsAppService->sendTextMessage($from, "ℹ️ معلومات عن خدمتنا:\n\nنحن نقدم خدمة واتساب بيزنس متطورة باستخدام Laravel وMeta Business API.\n\nيمكنك التواصل معنا في أي وقت!");
-                break;
-
-            case 'خدمات':
-            case 'services':
-                $this->whatsAppService->sendTextMessage($from, "🛎️ خدماتنا:\n\n✅ الرد الآلي السريع\n✅ معالجة الرسائل النصية\n✅ استقبال الصور والملفات\n✅ إشعارات فورية\n✅ دعم فني 24/7");
-                break;
-
-            case 'وقت':
-            case 'time':
-                $currentTime = now()->format('Y-m-d H:i:s');
-                $this->whatsAppService->sendTextMessage($from, "⏰ الوقت الحالي:\n{$currentTime}");
-                break;
-
-            default:
-                $this->whatsAppService->sendTextMessage($from, "🤔 لم أفهم رسالتك.\n\nاكتب 'مساعدة' للحصول على قائمة الأوامر المتاحة.");
+            // تحديث حالة الرسالة في قاعدة البيانات
+            $message = WhatsAppMessage::where('message_id', $messageId)->first();
+            if ($message) {
+                $message->updateStatus($statusType, $timestamp);
+                Log::info("Updated message {$messageId} status to {$statusType}");
+            } else {
+                Log::warning("Message {$messageId} not found in database");
+            }
+        } catch (\Exception $e) {
+            Log::error('Error processing message status: ' . $e->getMessage());
         }
     }
 
     /**
-     * Handle Image Message
-     */
-    private function handleImageMessage($from, $image)
-    {
-        $caption = isset($image['caption']) ? $image['caption'] : '';
-        $this->whatsAppService->sendTextMessage($from, "📸 تم استلام صورتك بنجاح!\n\n" . ($caption ? "التعليق: {$caption}" : ""));
-    }
-
-    /**
-     * Handle Document Message
-     */
-    private function handleDocumentMessage($from, $document)
-    {
-        $filename = isset($document['filename']) ? $document['filename'] : 'ملف غير معروف';
-        $this->whatsAppService->sendTextMessage($from, "📄 تم استلام المستند بنجاح!\n\nاسم الملف: {$filename}");
-    }
-
-    /**
-     * Handle Audio Message
-     */
-    private function handleAudioMessage($from, $audio)
-    {
-        $this->whatsAppService->sendTextMessage($from, "🎵 تم استلام الرسالة الصوتية بنجاح!");
-    }
-
-    /**
-     * Send Message (API for testing)
+     * إرسال رسالة (API للاختبار)
      */
     public function sendMessage(Request $request)
     {
         $request->validate([
-            'to' => 'required',
-            'message' => 'required_if:type,text',
-            'type' => 'in:text,template,image'
+            'to' => 'required|string',
+            'message' => 'required_if:type,text|string',
+            'type' => 'in:text,template,image,document',
+            'template_name' => 'required_if:type,template|string',
+            'image_url' => 'required_if:type,image|url',
+            'document_url' => 'required_if:type,document|url',
+            'parameters' => 'array',
+            'parameters.*' => 'string',
         ]);
 
         $to = $request->input('to');
         $type = $request->input('type', 'text');
 
         try {
+            $result = null;
+
             switch ($type) {
                 case 'template':
                     $templateName = $request->input('template_name');
                     $parameters = $request->input('parameters', []);
                     $language = $request->input('language', 'ar');
+
+                    Log::info('Sending template message', [
+                        'to' => $to,
+                        'template_name' => $templateName,
+                        'language' => $language,
+                        'parameters' => $parameters
+                    ]);
+
                     $result = $this->whatsAppService->sendTemplateMessage($to, $templateName, $language, $parameters);
                     break;
 
                 case 'image':
                     $imageUrl = $request->input('image_url');
                     $caption = $request->input('caption', '');
+                    Log::info('Sending image message', ['to' => $to, 'image_url' => $imageUrl]);
                     $result = $this->whatsAppService->sendImageMessage($to, $imageUrl, $caption);
                     break;
 
+                case 'document':
+                    $documentUrl = $request->input('document_url');
+                    $filename = $request->input('filename', '');
+                    $caption = $request->input('caption', '');
+                    Log::info('Sending document message', ['to' => $to, 'document_url' => $documentUrl]);
+                    $result = $this->whatsAppService->sendDocumentMessage($to, $documentUrl, $filename, $caption);
+                    break;
+
+                case 'text':
                 default:
                     $message = $request->input('message');
+                    Log::info('Sending text message', ['to' => $to, 'message' => $message]);
                     $result = $this->whatsAppService->sendTextMessage($to, $message);
+                    break;
             }
+
+            // التحقق من وجود message ID في الرد
+            if (!isset($result['messages'][0]['id'])) {
+                Log::error('No message ID returned from WhatsApp API', ['result' => $result]);
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Failed to send message: No message ID returned',
+                    'data' => $result
+                ], 500);
+            }
+
+            // تسجيل الرسالة في قاعدة البيانات
+            $messageId = $result['messages'][0]['id'];
+            $content = $type === 'text' ? $request->input('message') : "[$type message]";
+            WhatsAppMessage::logOutbound($messageId, $to, $type, $content);
+
+            Log::info('Message sent successfully', ['message_id' => $messageId, 'to' => $to]);
 
             return response()->json([
                 'success' => true,
+                'message' => 'Message sent successfully',
                 'data' => $result
             ]);
         } catch (\Exception $e) {
+            Log::error('Error sending message: ' . $e->getMessage(), ['request' => $request->all()]);
             return response()->json([
                 'success' => false,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'message' => 'Failed to send message'
             ], 500);
         }
     }
 
     /**
-     * Send Template Message
+     * إرسال Template Message
      */
     public function sendTemplate(Request $request)
     {
         $request->validate([
-            'to' => 'required',
-            'template_name' => 'required',
+            'to' => 'required|string',
+            'template_name' => 'required|string',
             'language' => 'string',
-            'parameters' => 'array'
+            'parameters' => 'array',
+            'parameters.*' => 'string',
         ]);
 
         $to = $request->input('to');
@@ -249,17 +244,87 @@ class WhatsAppController extends Controller
         $parameters = $request->input('parameters', []);
 
         try {
+            Log::info('Sending template message', [
+                'to' => $to,
+                'template_name' => $templateName,
+                'language' => $language,
+                'parameters' => $parameters
+            ]);
+
             $result = $this->whatsAppService->sendTemplateMessage($to, $templateName, $language, $parameters);
+
+            // تسجيل الرسالة في قاعدة البيانات
+            if (isset($result['messages'][0]['id'])) {
+                $messageId = $result['messages'][0]['id'];
+                WhatsAppMessage::logOutbound($messageId, $to, 'template', $templateName);
+                Log::info('Template message logged', ['message_id' => $messageId, 'to' => $to]);
+            } else {
+                Log::error('No message ID returned from WhatsApp API', ['result' => $result]);
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Failed to send template: No message ID returned',
+                    'data' => $result
+                ], 500);
+            }
 
             return response()->json([
                 'success' => true,
+                'message' => 'Template sent successfully',
                 'data' => $result
             ]);
         } catch (\Exception $e) {
+            Log::error('Error sending template: ' . $e->getMessage(), ['request' => $request->all()]);
             return response()->json([
                 'success' => false,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'message' => 'Failed to send template'
             ], 500);
         }
+    }
+
+    /**
+     * الحصول على إحصائيات سريعة
+     */
+    public function getStats()
+    {
+        try {
+            $stats = [
+                'total_messages' => WhatsAppMessage::count(),
+                'messages_today' => WhatsAppMessage::whereDate('created_at', today())->count(),
+            ];
+
+            Log::info('Stats retrieved', ['stats' => $stats]);
+
+            return response()->json([
+                'success' => true,
+                'data' => $stats
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error getting stats: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'message' => 'Failed to retrieve stats'
+            ], 500);
+        }
+    }
+
+    /**
+     * صفحة الاختبار البسيطة
+     */
+    public function testPage()
+    {
+        return response()->json([
+            'service' => 'WhatsApp Business API',
+            'status' => 'Active',
+            'version' => '1.0',
+            'timestamp' => now()->toISOString(),
+            'endpoints' => [
+                'webhook' => '/api/whatsapp/webhook',
+                'send_message' => '/api/whatsapp/send',
+                'send_template' => '/api/whatsapp/template',
+                'stats' => '/api/whatsapp/stats'
+            ]
+        ]);
     }
 }

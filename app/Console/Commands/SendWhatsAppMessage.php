@@ -31,7 +31,7 @@ class SendWhatsAppMessage extends Command
             $whatsAppService = new WhatsAppService();
 
             if ($type === 'template' && $template) {
-                $result = $whatsAppService->sendTemplateMessage($phone, $template, 'ar', $params);
+                $result = $whatsAppService->sendTemplateMessage($phone, $template, 'en', $params);
             } else {
                 $result = $whatsAppService->sendTextMessage($phone, $message);
             }

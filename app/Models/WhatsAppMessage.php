@@ -3,12 +3,14 @@
 
 namespace App\Models;
 
+use App\Models\WhatsAppUser;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class WhatsAppMessage extends Model
 {
     use HasFactory;
+    protected $table = 'whatsapp_messages'; // <-- هنا
 
     protected $fillable = [
         'message_id',
@@ -44,15 +46,16 @@ class WhatsAppMessage extends Model
     public static function logInbound($messageId, $phoneNumber, $type, $content, $metadata = null)
     {
         return static::create([
-            'message_id' => $messageId,
+            'message_id'   => $messageId,
             'phone_number' => $phoneNumber,
-            'direction' => 'inbound',
-            'type' => $type,
-            'content' => $content,
-            'metadata' => $metadata,
-            'status' => 'received'
+            'direction'    => 'inbound',
+            'type'         => $type,
+            'content'      => $content,
+            'metadata'     => $metadata,
+            'status'       => 'delivered' // <-- بدل received لتتوافق مع الـ enum
         ]);
     }
+
 
     /**
      * record outbound message
